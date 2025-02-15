@@ -1,5 +1,7 @@
+"use client";
+
 import React, { useState } from 'react';
-import { useRouter } from 'next/router';
+import { useRouter } from 'next/navigation';
 
 const [userThoughts, setUserThoughts] = useState<string>("");
 const router = useRouter();
@@ -12,13 +14,3 @@ const router = useRouter();
   className="w-full px-3 py-2 border rounded-md border-input bg-background"
   rows={4}
 />
-
-const handleSubmit = async () => {
-  // Submit check-in logic...
-
-  // Navigate to dashboard with thoughts
-  router.push({
-    pathname: '/employee-health',
-    query: { thoughts: userThoughts },
-  });
-}; 

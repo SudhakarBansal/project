@@ -1,10 +1,11 @@
-"use client"
+"use client";
 
-import { Card } from "@/components/ui/card"
-import { NavMenu } from "@/components/nav-menu"
-import { ThemeToggle } from "@/components/theme-toggle"
-import { Button } from "@/components/ui/button"
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
+import { useEffect, useState } from "react";
+import { Card } from "@/components/ui/card";
+import { NavMenu } from "@/components/nav-menu";
+import { ThemeToggle } from "@/components/theme-toggle";
+import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import {
   Activity,
   AlertTriangle,
@@ -12,16 +13,282 @@ import {
   ArrowUp,
   Users,
   Menu,
-} from "lucide-react"
+} from "lucide-react";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
+import { supabase } from "@/lib/supabase";
+import OpenAI from "openai";
+
+interface CheckIn {
+  created_at: string;
+  mood: number;
+  stress_level: number;
+  productivity_level: number;
+  user_name: string;
+}
+
+interface TeamInsights {
+  summary: string;
+  recommendations: string[];
+  riskFactors: {
+    level: "low" | "medium" | "high";
+    description: string;
+  }[];
+  positiveHighlights: string[];
+}
+
+// Initialize OpenAI API
+const openai = new OpenAI({
+  apiKey: process.env.NEXT_PUBLIC_OPENAI_API_KEY,
+  dangerouslyAllowBrowser: true, // Required for client-side usage
+});
+
+const getMoodValue = (mood: string): number => {
+  switch (mood.toLowerCase()) {
+    case 'happy': return 3;
+    case 'neutral': return 2;
+    case 'sad': return 1;
+    default: return 0;
+  }
+};
+
+const getAverageMoodText = (avgMood: number): string => {
+  if (avgMood >= 2.5) return "Happy";
+  if (avgMood >= 1.5) return "Neutral";
+  return "Sad";
+};
+
+// Helper function to calculate team metrics
+const calculateTeamMetrics = (checkIns: CheckIn[]) => {
+  if (!checkIns.length) {
+    return {
+      averageMood: "N/A",
+      averageStress: "0.0",
+      averageProductivity: "0.0",
+      totalCheckIns: 0
+    };
+  }
+
+  const metrics = checkIns.reduce(
+    (acc, curr) => ({
+      avgMood: acc.avgMood + getMoodValue(curr.mood.toString()),
+      avgStress: acc.avgStress + (curr.stress_level ?? 0),
+      avgProductivity: acc.avgProductivity + (curr.productivity_level ?? 0),
+      total: acc.total + 1,
+    }),
+    { avgMood: 0, avgStress: 0, avgProductivity: 0, total: 0 }
+  );
+
+  return {
+    averageMood: getAverageMoodText(metrics.avgMood / metrics.total),
+    averageStress: (metrics.avgStress / metrics.total).toFixed(1),
+    averageProductivity: (metrics.avgProductivity / metrics.total).toFixed(1),
+    totalCheckIns: metrics.total,
+  };
+};
+
+// Function to generate a structured prompt
+const generateAnalysisPrompt = (checkIns: CheckIn[]) => {
+  const metrics = calculateTeamMetrics(checkIns);
+
+  return `Please analyze the following team wellness data and provide insights:
+
+Team Metrics:
+- Average Mood: ${metrics.averageMood}
+- Average Stress Level: ${metrics.averageStress}/10
+- Average Productivity: ${metrics.averageProductivity}/10
+- Total Check-ins: ${metrics.totalCheckIns}
+
+Raw Check-in Data:
+${JSON.stringify(checkIns, null, 2)}
+
+Please provide a structured analysis in the following JSON format:
+{
+  "summary": "A concise overview of the team's current state",
+  "recommendations": ["Action item 1", "Action item 2", "Action item 3"],
+  "riskFactors": [
+    {
+      "level": "low|medium|high",
+      "description": "Description of the risk factor"
+    }
+  ],
+  "positiveHighlights": ["Positive aspect 1", "Positive aspect 2"]
+}`;
+};
+
+// Function to get summary and recommendations
+const getSummaryAndRecommendations = async (
+  checkIns: CheckIn[]
+): Promise<TeamInsights> => {
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4-turbo-preview",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a workplace wellness expert analyzing team health data. Provide concrete, actionable insights based on the data provided.",
+        },
+        {
+          role: "user",
+          content: generateAnalysisPrompt(checkIns),
+        },
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.7,
+    });
+
+    const content = response.choices[0].message.content;
+    if (!content) throw new Error("No content in response");
+    
+    const insights: TeamInsights = JSON.parse(content);
+    return insights;
+  } catch (error) {
+    console.error("Error fetching insights from OpenAI:", error);
+    return {
+      summary: "Error analyzing team data.",
+      recommendations: ["Unable to generate recommendations at this time."],
+      riskFactors: [
+        {
+          level: "low",
+          description: "Analysis currently unavailable",
+        },
+      ],
+      positiveHighlights: [],
+    };
+  }
+};
+
+const AiRecommendationsCard = ({ insights }: { insights: TeamInsights }) => (
+  <Card className="p-4 lg:p-6">
+    <h3 className="text-lg font-medium mb-4">AI Insights & Recommendations</h3>
+    <div className="space-y-6">
+      <div>
+        <h4 className="font-medium mb-2">Summary</h4>
+        <p className="text-muted-foreground">{insights.summary}</p>
+      </div>
+
+      <div>
+        <h4 className="font-medium mb-2">Recommendations</h4>
+        <ul className="list-disc list-inside space-y-2 text-muted-foreground">
+          {insights.recommendations.map((rec, index) => (
+            <li key={index}>{rec}</li>
+          ))}
+        </ul>
+      </div>
+
+      <div>
+        <h4 className="font-medium mb-2">Risk Factors</h4>
+        <div className="space-y-2">
+          {insights.riskFactors.map((risk, index) => (
+            <div
+              key={index}
+              className={`p-3 rounded-lg ${
+                risk.level === "high"
+                  ? "bg-red-100 dark:bg-red-900/30"
+                  : risk.level === "medium"
+                  ? "bg-yellow-100 dark:bg-yellow-900/30"
+                  : "bg-green-100 dark:bg-green-900/30"
+              }`}
+            >
+              <p className="font-medium capitalize">{risk.level} Risk</p>
+              <p className="text-sm text-muted-foreground">
+                {risk.description}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {insights.positiveHighlights.length > 0 && (
+        <div>
+          <h4 className="font-medium mb-2">Positive Highlights</h4>
+          <ul className="list-disc list-inside space-y-2 text-muted-foreground">
+            {insights.positiveHighlights.map((highlight, index) => (
+              <li key={index}>{highlight}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  </Card>
+);
 
 export default function Manager() {
+  const [checkIns, setCheckIns] = useState<CheckIn[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [insights, setInsights] = useState<TeamInsights | null>(null);
+
+  const fetchCheckIns = async () => {
+    setLoading(true);
+
+    try {
+      const { data, error } = await supabase
+        .from("check_ins")
+        .select("*")
+        .order("created_at", { ascending: true });
+
+      if (error) throw error;
+
+      console.log("Fetched check-ins:", data);
+      setCheckIns(data || []);
+      const fetchedInsights = await getSummaryAndRecommendations(data || []);
+      setInsights(fetchedInsights);
+    } catch (err: any) {
+      setError(err.message);
+      console.error("Error fetching check-ins:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchCheckIns();
+  }, []);
+
+  const chartData = checkIns.map((checkIn) => ({
+    date: new Date(checkIn.created_at!).toLocaleDateString("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric"
+    }),
+    mood: checkIn.mood,
+    stress: checkIn.stress_level,
+    productivity: checkIn.productivity_level,
+  }));
+
+  console.log("Chart Data:", chartData);
+
+  // Calculate metrics
+  const teamSize = checkIns.length;
+  const metrics = calculateTeamMetrics(checkIns);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-lg">Loading manager dashboard...</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-lg text-red-500">
+          Error loading dashboard: {error}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background">
       <div className="lg:hidden fixed top-0 left-0 right-0 p-4 flex items-center justify-between border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -62,19 +329,10 @@ export default function Manager() {
         <div className="flex-1 p-4 lg:p-8">
           <div className="max-w-6xl mx-auto pt-16 lg:pt-0">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
-              <h2 className="text-2xl lg:text-3xl font-bold">Manager Dashboard</h2>
+              <h2 className="text-2xl lg:text-3xl font-bold">
+                Manager Dashboard
+              </h2>
               <div className="flex items-center gap-4 w-full sm:w-auto">
-                <Select defaultValue="engineering">
-                  <SelectTrigger className="w-full sm:w-[180px]">
-                    <SelectValue placeholder="Select team" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="engineering">Engineering</SelectItem>
-                    <SelectItem value="design">Design</SelectItem>
-                    <SelectItem value="marketing">Marketing</SelectItem>
-                    <SelectItem value="sales">Sales</SelectItem>
-                  </SelectContent>
-                </Select>
                 <div className="hidden lg:block">
                   <ThemeToggle />
                 </div>
@@ -88,7 +346,7 @@ export default function Manager() {
                     <Users className="h-5 w-5 text-muted-foreground" />
                     <div>
                       <p className="text-sm text-muted-foreground">Team Size</p>
-                      <p className="text-2xl font-bold">12</p>
+                      <p className="text-2xl font-bold">{teamSize}</p>
                     </div>
                   </div>
                 </div>
@@ -99,8 +357,10 @@ export default function Manager() {
                   <div className="flex items-center gap-4">
                     <ArrowUp className="h-5 w-5 text-green-500" />
                     <div>
-                      <p className="text-sm text-muted-foreground">Engagement</p>
-                      <p className="text-2xl font-bold">92%</p>
+                      <p className="text-sm text-muted-foreground">Avg Mood</p>
+                      <p className="text-2xl font-bold">
+                        {metrics.averageMood}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -111,8 +371,12 @@ export default function Manager() {
                   <div className="flex items-center gap-4">
                     <ArrowDown className="h-5 w-5 text-red-500" />
                     <div>
-                      <p className="text-sm text-muted-foreground">Burnout Risk</p>
-                      <p className="text-2xl font-bold">15%</p>
+                      <p className="text-sm text-muted-foreground">
+                        Avg Stress
+                      </p>
+                      <p className="text-2xl font-bold">
+                        {metrics.averageStress}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -123,102 +387,62 @@ export default function Manager() {
                   <div className="flex items-center gap-4">
                     <AlertTriangle className="h-5 w-5 text-yellow-500" />
                     <div>
-                      <p className="text-sm text-muted-foreground">Alerts</p>
-                      <p className="text-2xl font-bold">2</p>
+                      <p className="text-sm text-muted-foreground">
+                        Avg Productivity
+                      </p>
+                      <p className="text-2xl font-bold">
+                        {metrics.averageProductivity}
+                      </p>
                     </div>
                   </div>
                 </div>
               </Card>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 lg:gap-6">
+            <div className="grid grid-cols-1 gap-4 lg:gap-6 mb-8">
               <Card className="p-4 lg:p-6">
-                <h3 className="text-lg font-medium mb-4">Team Health Overview</h3>
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Overall Morale</span>
-                      <span className="font-medium">85%</span>
-                    </div>
-                    <div className="h-2 bg-muted rounded-full">
-                      <div className="h-2 bg-green-500 rounded-full" style={{ width: "85%" }} />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Stress Level</span>
-                      <span className="font-medium">42%</span>
-                    </div>
-                    <div className="h-2 bg-muted rounded-full">
-                      <div className="h-2 bg-yellow-500 rounded-full" style={{ width: "42%" }} />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Work Satisfaction</span>
-                      <span className="font-medium">78%</span>
-                    </div>
-                    <div className="h-2 bg-muted rounded-full">
-                      <div className="h-2 bg-blue-500 rounded-full" style={{ width: "78%" }} />
-                    </div>
-                  </div>
-                </div>
-              </Card>
-
-              <Card className="p-4 lg:p-6">
-                <h3 className="text-lg font-medium mb-4">Recent Alerts</h3>
-                <div className="space-y-4">
-                  <div className="flex items-center gap-4 p-4 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg">
-                    <AlertTriangle className="h-5 w-5 text-yellow-600 dark:text-yellow-400" />
-                    <div>
-                      <p className="font-medium">High Stress Detected</p>
-                      <p className="text-sm text-muted-foreground">3 team members showing elevated stress levels</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4 p-4 bg-red-100 dark:bg-red-900/30 rounded-lg">
-                    <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400" />
-                    <div>
-                      <p className="font-medium">Burnout Risk</p>
-                      <p className="text-sm text-muted-foreground">2 team members at risk of burnout</p>
-                    </div>
-                  </div>
-                </div>
-              </Card>
-
-              <Card className="p-4 lg:p-6">
-                <h3 className="text-lg font-medium mb-4">AI Recommendations</h3>
-                <div className="space-y-4">
-                  <p className="text-muted-foreground">Based on recent team data:</p>
-                  <ul className="list-disc list-inside space-y-2 text-muted-foreground">
-                    <li>Consider implementing flexible work hours</li>
-                    <li>Schedule one-on-one check-ins with at-risk team members</li>
-                    <li>Plan team building activities to maintain high morale</li>
-                    <li>Review workload distribution</li>
-                  </ul>
-                </div>
-              </Card>
-
-              <Card className="p-4 lg:p-6">
-                <h3 className="text-lg font-medium mb-4">Action Items</h3>
-                <div className="space-y-4">
-                  <div className="flex items-center gap-4 p-4 border rounded-lg">
-                    <div className="h-2 w-2 bg-red-500 rounded-full" />
-                    <p className="text-sm">Schedule wellness workshop</p>
-                  </div>
-                  <div className="flex items-center gap-4 p-4 border rounded-lg">
-                    <div className="h-2 w-2 bg-yellow-500 rounded-full" />
-                    <p className="text-sm">Review project deadlines</p>
-                  </div>
-                  <div className="flex items-center gap-4 p-4 border rounded-lg">
-                    <div className="h-2 w-2 bg-green-500 rounded-full" />
-                    <p className="text-sm">Plan team building event</p>
-                  </div>
+                <h3 className="text-lg font-medium mb-4">Weekly Trends</h3>
+                <div className="h-[300px] lg:h-[400px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart
+                      data={chartData}
+                      margin={{ top: 5, right: 10, left: 0, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="date" />
+                      <YAxis />
+                      <Tooltip />
+                      <Line
+                        type="monotone"
+                        dataKey="mood"
+                        stroke="hsl(var(--chart-1))"
+                        name="Mood"
+                        strokeWidth={2}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="stress"
+                        stroke="hsl(var(--chart-2))"
+                        name="Stress"
+                        strokeWidth={2}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="productivity"
+                        stroke="hsl(var(--chart-3))"
+                        name="Productivity"
+                        strokeWidth={2}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
                 </div>
               </Card>
             </div>
+
+            {insights && <AiRecommendationsCard insights={insights} />}
           </div>
         </div>
       </div>
     </div>
-  )
+  );
 }

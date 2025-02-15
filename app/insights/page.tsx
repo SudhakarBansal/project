@@ -192,7 +192,7 @@ export default function InsightsPage() {
           <Activity className="h-6 w-6" />
           <h1 className="font-semibold">Wellness Tracker</h1>
         </div>
-        <ThemeToggle />
+          <ThemeToggle />
       </div>
 
       <div className="flex">
@@ -221,20 +221,20 @@ export default function InsightsPage() {
                 <Card className="p-4">
                   <h3 className="text-lg font-medium mb-2">Total Check-ins</h3>
                   <p className="text-3xl font-bold">{checkIns.length}</p>
-                </Card>
+              </Card>
                 <Card className="p-4">
                   <h3 className="text-lg font-medium mb-2">Average Stress</h3>
                   <p className="text-3xl font-bold">
                     {(checkIns.reduce((acc, curr) => acc + curr.stress_level, 0) / checkIns.length || 0).toFixed(1)}
                   </p>
-                </Card>
+              </Card>
                 <Card className="p-4">
                   <h3 className="text-lg font-medium mb-2">Average Productivity</h3>
                   <p className="text-3xl font-bold">
                     {(checkIns.reduce((acc, curr) => acc + curr.productivity_level, 0) / checkIns.length || 0).toFixed(1)}
                   </p>
-                </Card>
-              </div>
+              </Card>
+            </div>
 
               {/* Charts */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -271,7 +271,6 @@ export default function InsightsPage() {
                     <thead>
                       <tr className="border-b">
                         <th className="text-left py-2">Date</th>
-                        <th className="text-left py-2">Name</th>
                         <th className="text-left py-2">Mood</th>
                         <th className="text-left py-2">Stress</th>
                         <th className="text-left py-2">Productivity</th>
@@ -283,7 +282,6 @@ export default function InsightsPage() {
                           <td className="py-2">
                             {format(new Date(checkIn.created_at!), 'MMM d, yyyy')}
                           </td>
-                          <td className="py-2">{checkIn.user_name}</td>
                           <td className="py-2 capitalize">{checkIn.mood}</td>
                           <td className="py-2">{checkIn.stress_level}/10</td>
                           <td className="py-2">{checkIn.productivity_level}/10</td>

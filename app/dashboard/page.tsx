@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { NavMenu } from "@/components/nav-menu";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -18,7 +19,6 @@ import {
 } from "recharts";
 import { supabase } from "@/lib/supabase";
 import OpenAI from "openai";
-import { useSearchParams } from "next/navigation";
 
 // Initialize OpenAI API
 const openai = new OpenAI({
@@ -264,7 +264,10 @@ export default function Dashboard() {
 
   const handleFetchCheckIns = async () => {
     if (!name.trim()) {
-      alert("Please enter a valid name.");
+      setTimeout(() => {
+        setError(null);
+      }, 2500);
+      setError("Please enter a valid name.");
       return;
     }
 
@@ -277,6 +280,14 @@ export default function Dashboard() {
         .order("created_at", { ascending: true });
 
       if (error) throw error;
+
+      if (data.length === 0) {
+        setTimeout(() => {
+          setError(null);
+        }, 2500);
+        setError("No check-ins found for this name. Please try again.");
+        return;
+      }
 
       setCheckIns(data || []);
       setIsFetched(true);
@@ -334,6 +345,14 @@ export default function Dashboard() {
     productivity: checkIn.productivity_level,
   }));
 
+  const handleBack = () => {
+    setName("");
+    setCheckIns([]);
+    setInsights(null);
+    setError(null);
+    setIsFetched(false);
+  };
+
   return (
     <div className="min-h-screen bg-background flex">
       {/* Sidebar - Always Visible */}
@@ -377,6 +396,11 @@ export default function Dashboard() {
               <ThemeToggle />
             </div>
           </div>
+
+          {/* Back Button */}
+          <Button onClick={handleBack} className="mt-4">
+            Back
+          </Button>
 
           {!isFetched && (
             <div className="text-lg max-w-md mx-auto">

@@ -9,9 +9,9 @@ import { Button } from "@/components/ui/button"
 
 const navigation = [
   { name: "Check-in", href: "/", icon: Activity },
-  { name: "Dashboard", href: "/dashboard", icon: LineChart },
+  { name: "Employee Health", href: "/employee-health", icon: LineChart },
   { name: "Team Insights", href: "/insights", icon: BarChart3 },
-  { name: "Manager View", href: "/manager", icon: Users },
+  { name: "Manager Dashboard", href: "/manager", icon: Users },
 ]
 
 export function NavMenu() {

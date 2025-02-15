@@ -488,7 +488,7 @@ export default function Dashboard() {
         <div className="max-w-6xl mx-auto pt-16 lg:pt-0">
           <div className="flex justify-between items-center mb-8">
             <h2 className="text-2xl lg:text-3xl font-bold">
-              {isFetched ? "Your Dashboard" : "Enter Your Name"}
+              {isFetched ? `${name}'s Mental health insights` : "Enter Employee Name"}
             </h2>
             <div className="hidden lg:block">
               <ThemeToggle />
@@ -506,7 +506,7 @@ export default function Dashboard() {
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="Enter your name"
+                placeholder="Enter employee name"
                 className="w-full px-3 py-2 border rounded-md border-input bg-background"
               />
               <Button onClick={handleFetchCheckIns} className="mt-2 w-full">

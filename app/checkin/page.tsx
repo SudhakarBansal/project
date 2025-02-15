@@ -18,7 +18,7 @@ const handleSubmit = async () => {
 
   // Navigate to dashboard with thoughts
   router.push({
-    pathname: '/dashboard',
+    pathname: '/employee-health',
     query: { thoughts: userThoughts },
   });
 }; 

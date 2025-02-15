@@ -43,7 +43,21 @@ export default function InsightsPage() {
   const [checkIns, setCheckIns] = useState<CheckIn[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [chartData, setChartData] = useState<{
+    line: ChartData<'line'>
+    bar: ChartData<'bar'>
+  }>({
+    line: {
+      labels: [],
+      datasets: []
+    },
+    bar: {
+      labels: [],
+      datasets: []
+    }
+  })
 
+  // Fetch check-ins data
   useEffect(() => {
     async function fetchCheckIns() {
       try {
@@ -54,7 +68,10 @@ export default function InsightsPage() {
 
         if (error) throw error
 
-        setCheckIns(data)
+        setCheckIns(data || [])
+        console.log(data);
+        
+        updateChartData(data || [])
       } catch (err: any) {
         setError(err.message)
         console.error('Error fetching check-ins:', err)
@@ -66,28 +83,79 @@ export default function InsightsPage() {
     fetchCheckIns()
   }, [])
 
-  // Process data for charts
-  const processChartData = (
-    data: CheckIn[],
-    valueKey: 'stress_level' | 'productivity_level'
-  ): ChartDataPoint[] => {
-    return data.map(item => ({
-      date: format(new Date(item.created_at!), 'MMM d'),
-      value: item[valueKey]
-    }))
+  // Process and update chart data
+  const updateChartData = (data: CheckIn[]) => {
+    // Process data for line chart
+    const dates = Array.from(new Set(data.map(item => 
+      format(new Date(item.created_at!), 'MMM d')
+    ))).sort((a, b) => 
+      new Date(a).getTime() - new Date(b).getTime()
+    )
+
+    const stressData = dates.map(date => {
+      const dayData = data.filter(item => 
+        format(new Date(item.created_at!), 'MMM d') === date
+      )
+      return dayData.reduce((acc, curr) => acc + curr.stress_level, 0) / dayData.length
+    })
+
+    const productivityData = dates.map(date => {
+      const dayData = data.filter(item => 
+        format(new Date(item.created_at!), 'MMM d') === date
+      )
+      return dayData.reduce((acc, curr) => acc + curr.productivity_level, 0) / dayData.length
+    })
+
+    // Process data for bar chart
+    const moodCounts = data.reduce((acc, curr) => {
+      acc[curr.mood] = (acc[curr.mood] || 0) + 1
+      return acc
+    }, {} as Record<string, number>)
+
+    setChartData({
+      line: {
+        labels: dates,
+        datasets: [
+          {
+            label: 'Stress Level',
+            data: stressData,
+            borderColor: 'rgb(255, 99, 132)',
+            backgroundColor: 'rgba(255, 99, 132, 0.5)',
+            tension: 0.3,
+          },
+          {
+            label: 'Productivity Level',
+            data: productivityData,
+            borderColor: 'rgb(53, 162, 235)',
+            backgroundColor: 'rgba(53, 162, 235, 0.5)',
+            tension: 0.3,
+          },
+        ],
+      },
+      bar: {
+        labels: ['Happy', 'Neutral', 'Sad'],
+        datasets: [
+          {
+            label: 'Mood Distribution',
+            data: [
+              moodCounts['happy'] || 0,
+              moodCounts['neutral'] || 0,
+              moodCounts['sad'] || 0,
+            ],
+            backgroundColor: [
+              'rgba(75, 192, 192, 0.6)',
+              'rgba(255, 206, 86, 0.6)',
+              'rgba(255, 99, 132, 0.6)',
+            ],
+          },
+        ],
+      }
+    })
   }
-
-  const stressData = processChartData(checkIns, 'stress_level')
-  const productivityData = processChartData(checkIns, 'productivity_level')
-
-  // Mood distribution data
-  const moodCounts = checkIns.reduce((acc, curr) => {
-    acc[curr.mood] = (acc[curr.mood] || 0) + 1
-    return acc
-  }, {} as Record<string, number>)
 
   const chartOptions = {
     responsive: true,
+    maintainAspectRatio: false,
     plugins: {
       legend: {
         position: 'top' as const,
@@ -101,49 +169,20 @@ export default function InsightsPage() {
     },
   }
 
-  const lineChartData: ChartData<'line'> = {
-    labels: stressData.map(d => d.date),
-    datasets: [
-      {
-        label: 'Stress Level',
-        data: stressData.map(d => d.value),
-        borderColor: 'rgb(255, 99, 132)',
-        backgroundColor: 'rgba(255, 99, 132, 0.5)',
-      },
-      {
-        label: 'Productivity Level',
-        data: productivityData.map(d => d.value),
-        borderColor: 'rgb(53, 162, 235)',
-        backgroundColor: 'rgba(53, 162, 235, 0.5)',
-      },
-    ],
-  }
-
-  const moodChartData: ChartData<'bar'> = {
-    labels: ['Happy', 'Neutral', 'Sad'],
-    datasets: [
-      {
-        label: 'Mood Distribution',
-        data: [
-          moodCounts['happy'] || 0,
-          moodCounts['neutral'] || 0,
-          moodCounts['sad'] || 0,
-        ],
-        backgroundColor: [
-          'rgba(75, 192, 192, 0.6)',
-          'rgba(255, 206, 86, 0.6)',
-          'rgba(255, 99, 132, 0.6)',
-        ],
-      },
-    ],
-  }
-
   if (loading) {
-    return <div className="p-8">Loading insights...</div>
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-lg">Loading insights...</div>
+      </div>
+    )
   }
 
   if (error) {
-    return <div className="p-8 text-red-500">Error loading insights: {error}</div>
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-lg text-red-500">Error loading insights: {error}</div>
+      </div>
+    )
   }
 
   return (
@@ -202,7 +241,7 @@ export default function InsightsPage() {
                 <Card className="p-4">
                   <h3 className="text-lg font-medium mb-4">Stress & Productivity Trends</h3>
                   <div className="h-[300px]">
-                    <Line options={chartOptions} data={lineChartData} />
+                    <Line options={chartOptions} data={chartData.line} />
                   </div>
                 </Card>
 
@@ -218,7 +257,7 @@ export default function InsightsPage() {
                           },
                         },
                       }} 
-                      data={moodChartData} 
+                      data={chartData.bar}
                     />
                   </div>
                 </Card>

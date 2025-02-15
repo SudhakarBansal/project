@@ -44,18 +44,26 @@ interface TeamInsights {
   positiveHighlights: string[];
 }
 
+const CACHE_KEY = "team_insights_cache";
+const LAST_FETCH_KEY = "last_fetch_date";
+const CHECKINS_HASH_KEY = "checkins_hash";
+
 // Initialize OpenAI API
 const openai = new OpenAI({
   apiKey: process.env.NEXT_PUBLIC_OPENAI_API_KEY,
-  dangerouslyAllowBrowser: true, // Required for client-side usage
+  dangerouslyAllowBrowser: true,
 });
 
 const getMoodValue = (mood: string): number => {
   switch (mood.toLowerCase()) {
-    case 'happy': return 3;
-    case 'neutral': return 2;
-    case 'sad': return 1;
-    default: return 0;
+    case "happy":
+      return 3;
+    case "neutral":
+      return 2;
+    case "sad":
+      return 1;
+    default:
+      return 0;
   }
 };
 
@@ -65,6 +73,57 @@ const getAverageMoodText = (avgMood: number): string => {
   return "Sad";
 };
 
+// Function to generate a hash of check-ins data
+const generateCheckInsHash = (checkIns: CheckIn[]): string => {
+  return JSON.stringify(checkIns)
+    .split("")
+    .reduce((a, b) => {
+      a = (a << 5) - a + b.charCodeAt(0);
+      return a & a;
+    }, 0)
+    .toString();
+};
+
+// Function to check if we should fetch new insights
+const shouldFetchNewInsights = (
+  currentCheckIns: CheckIn[],
+  lastFetchDate: string | null,
+  previousCheckInsHash: string | null
+): boolean => {
+  const currentDate = new Date().toISOString().split("T")[0];
+  const currentHash = generateCheckInsHash(currentCheckIns);
+
+  return (
+    !lastFetchDate ||
+    lastFetchDate !== currentDate ||
+    previousCheckInsHash !== currentHash
+  );
+};
+
+// Cache management functions
+const cacheInsights = (insights: TeamInsights, checkInsHash: string) => {
+  const currentDate = new Date().toISOString().split("T")[0];
+  localStorage.setItem(CACHE_KEY, JSON.stringify(insights));
+  localStorage.setItem(LAST_FETCH_KEY, currentDate);
+  localStorage.setItem(CHECKINS_HASH_KEY, checkInsHash);
+};
+
+const getCachedInsights = (): {
+  insights: TeamInsights | null;
+  lastFetchDate: string | null;
+  checkInsHash: string | null;
+} => {
+  const cachedInsights = localStorage.getItem(CACHE_KEY);
+  const lastFetchDate = localStorage.getItem(LAST_FETCH_KEY);
+  const checkInsHash = localStorage.getItem(CHECKINS_HASH_KEY);
+
+  return {
+    insights: cachedInsights ? JSON.parse(cachedInsights) : null,
+    lastFetchDate,
+    checkInsHash,
+  };
+};
+
 // Helper function to calculate team metrics
 const calculateTeamMetrics = (checkIns: CheckIn[]) => {
   if (!checkIns.length) {
@@ -72,7 +131,7 @@ const calculateTeamMetrics = (checkIns: CheckIn[]) => {
       averageMood: "N/A",
       averageStress: "0.0",
       averageProductivity: "0.0",
-      totalCheckIns: 0
+      totalCheckIns: 0,
     };
   }
 
@@ -147,7 +206,7 @@ const getSummaryAndRecommendations = async (
 
     const content = response.choices[0].message.content;
     if (!content) throw new Error("No content in response");
-    
+
     const insights: TeamInsights = JSON.parse(content);
     return insights;
   } catch (error) {
@@ -227,21 +286,47 @@ export default function Manager() {
   const [error, setError] = useState<string | null>(null);
   const [insights, setInsights] = useState<TeamInsights | null>(null);
 
+  const fetchAndUpdateInsights = async (checkInsData: CheckIn[]) => {
+    try {
+      const newInsights = await getSummaryAndRecommendations(checkInsData);
+      setInsights(newInsights);
+
+      // Cache the new insights and check-ins hash
+      const checkInsHash = generateCheckInsHash(checkInsData);
+      cacheInsights(newInsights, checkInsHash);
+    } catch (err: any) {
+      console.error("Error fetching insights:", err);
+      setError(err.message);
+    }
+  };
+
   const fetchCheckIns = async () => {
     setLoading(true);
 
     try {
-      const { data, error } = await supabase
+      const { data: checkInsData, error: fetchError } = await supabase
         .from("check_ins")
         .select("*")
         .order("created_at", { ascending: true });
 
-      if (error) throw error;
+      if (fetchError) throw fetchError;
 
-      console.log("Fetched check-ins:", data);
-      setCheckIns(data || []);
-      const fetchedInsights = await getSummaryAndRecommendations(data || []);
-      setInsights(fetchedInsights);
+      setCheckIns(checkInsData || []);
+
+      // Get cached data
+      const {
+        insights: cachedInsights,
+        lastFetchDate,
+        checkInsHash,
+      } = getCachedInsights();
+
+      // Check if we need to fetch new insights
+      if (shouldFetchNewInsights(checkInsData, lastFetchDate, checkInsHash)) {
+        await fetchAndUpdateInsights(checkInsData);
+      } else if (cachedInsights) {
+        // Use cached insights if available
+        setInsights(cachedInsights);
+      }
     } catch (err: any) {
       setError(err.message);
       console.error("Error fetching check-ins:", err);
@@ -258,14 +343,12 @@ export default function Manager() {
     date: new Date(checkIn.created_at!).toLocaleDateString("en-US", {
       weekday: "short",
       month: "short",
-      day: "numeric"
+      day: "numeric",
     }),
     mood: checkIn.mood,
     stress: checkIn.stress_level,
     productivity: checkIn.productivity_level,
   }));
-
-  console.log("Chart Data:", chartData);
 
   // Calculate metrics
   const teamSize = checkIns.length;

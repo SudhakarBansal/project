@@ -20,6 +20,11 @@ import {
 import { supabase } from "@/lib/supabase";
 import OpenAI from "openai";
 
+// Cache keys
+const INSIGHTS_CACHE_KEY = "personal_insights_cache";
+const LAST_FETCH_KEY = "personal_last_fetch_date";
+const CHECKINS_HASH_KEY = "personal_checkins_hash";
+
 // Initialize OpenAI API
 const openai = new OpenAI({
   apiKey: process.env.NEXT_PUBLIC_OPENAI_API_KEY,
@@ -43,6 +48,71 @@ interface PersonalInsights {
   }[];
   suggestions: string[];
 }
+
+// Cache management functions
+const generateCheckInsHash = (
+  checkIns: CheckIn[],
+  thoughts: string | null
+): string => {
+  const dataToHash = { checkIns, thoughts };
+  return JSON.stringify(dataToHash)
+    .split("")
+    .reduce((a, b) => {
+      a = (a << 5) - a + b.charCodeAt(0);
+      return a & a;
+    }, 0)
+    .toString();
+};
+
+const shouldFetchNewInsights = (
+  currentCheckIns: CheckIn[],
+  thoughts: string | null,
+  lastFetchDate: string | null,
+  previousCheckInsHash: string | null
+): boolean => {
+  const currentDate = new Date().toISOString().split("T")[0];
+  const currentHash = generateCheckInsHash(currentCheckIns, thoughts);
+
+  return (
+    !lastFetchDate ||
+    lastFetchDate !== currentDate ||
+    previousCheckInsHash !== currentHash
+  );
+};
+
+const cacheInsights = (
+  insights: PersonalInsights,
+  checkInsHash: string,
+  userName: string
+) => {
+  const currentDate = new Date().toISOString().split("T")[0];
+  localStorage.setItem(
+    `${INSIGHTS_CACHE_KEY}_${userName}`,
+    JSON.stringify(insights)
+  );
+  localStorage.setItem(`${LAST_FETCH_KEY}_${userName}`, currentDate);
+  localStorage.setItem(`${CHECKINS_HASH_KEY}_${userName}`, checkInsHash);
+};
+
+const getCachedInsights = (
+  userName: string
+): {
+  insights: PersonalInsights | null;
+  lastFetchDate: string | null;
+  checkInsHash: string | null;
+} => {
+  const cachedInsights = localStorage.getItem(
+    `${INSIGHTS_CACHE_KEY}_${userName}`
+  );
+  const lastFetchDate = localStorage.getItem(`${LAST_FETCH_KEY}_${userName}`);
+  const checkInsHash = localStorage.getItem(`${CHECKINS_HASH_KEY}_${userName}`);
+
+  return {
+    insights: cachedInsights ? JSON.parse(cachedInsights) : null,
+    lastFetchDate,
+    checkInsHash,
+  };
+};
 
 const getMoodValue = (mood: string): number => {
   switch (mood.toLowerCase()) {
@@ -207,6 +277,52 @@ Please structure your response as follows:
   }
 };
 
+const fetchAndUpdateInsights = async (
+  checkIns: CheckIn[],
+  thoughts: string | null,
+  userName: string
+): Promise<PersonalInsights> => {
+  try {
+    let combinedInsights: PersonalInsights | null = null;
+
+    if (checkIns && checkIns.length > 0) {
+      const checkInInsights = await getPersonalInsights(checkIns, userName);
+      combinedInsights = checkInInsights;
+    }
+
+    if (thoughts) {
+      const thoughtInsights = await getThoughtsInsights(thoughts);
+
+      if (combinedInsights) {
+        combinedInsights = {
+          summary: `${combinedInsights.summary}\n\nThoughts Analysis: ${thoughtInsights.summary}`,
+          recommendations: [
+            ...combinedInsights.recommendations,
+            ...thoughtInsights.recommendations,
+          ],
+          patterns: [...combinedInsights.patterns, ...thoughtInsights.patterns],
+          suggestions: [
+            ...combinedInsights.suggestions,
+            ...thoughtInsights.suggestions,
+          ],
+        };
+      } else {
+        combinedInsights = thoughtInsights;
+      }
+    }
+
+    // Cache the new insights
+    const checkInsHash = generateCheckInsHash(checkIns, thoughts);
+    if (!combinedInsights) throw new Error("No insights generated");
+
+    cacheInsights(combinedInsights, checkInsHash, userName);
+    return combinedInsights;
+  } catch (error) {
+    console.error("Error fetching insights:", error);
+    throw error;
+  }
+};
+
 const PersonalInsightsCard = ({ insights }: { insights: PersonalInsights }) => (
   <Card className="p-4 lg:p-6">
     <h3 className="text-lg font-medium mb-4">Personal AI Insights</h3>
@@ -292,42 +408,24 @@ export default function Dashboard() {
       setCheckIns(data || []);
       setIsFetched(true);
 
-      // Get insights from check-in data
-      let combinedInsights: PersonalInsights | null = null;
+      // Get cached data
+      const {
+        insights: cachedInsights,
+        lastFetchDate,
+        checkInsHash,
+      } = getCachedInsights(name.trim());
 
-      if (data && data.length > 0) {
-        const checkInInsights = await getPersonalInsights(data, name.trim());
-        combinedInsights = checkInInsights;
-      }
-
-      // If there are thoughts, get additional insights and combine them
-      if (thoughts) {
-        const thoughtInsights = await getThoughtsInsights(thoughts);
-
-        if (combinedInsights) {
-          // Combine both types of insights
-          combinedInsights = {
-            summary: `${combinedInsights.summary}\n\nThoughts Analysis: ${thoughtInsights.summary}`,
-            recommendations: [
-              ...combinedInsights.recommendations,
-              ...thoughtInsights.recommendations,
-            ],
-            patterns: [
-              ...combinedInsights.patterns,
-              ...thoughtInsights.patterns,
-            ],
-            suggestions: [
-              ...combinedInsights.suggestions,
-              ...thoughtInsights.suggestions,
-            ],
-          };
-        } else {
-          combinedInsights = thoughtInsights;
-        }
-      }
-
-      if (combinedInsights) {
-        setInsights(combinedInsights);
+      // Check if we need to fetch new insights
+      if (shouldFetchNewInsights(data, thoughts, lastFetchDate, checkInsHash)) {
+        const newInsights = await fetchAndUpdateInsights(
+          data,
+          thoughts,
+          name.trim()
+        );
+        setInsights(newInsights);
+      } else if (cachedInsights) {
+        // Use cached insights if available
+        setInsights(cachedInsights);
       }
     } catch (err: any) {
       setError(err.message);
@@ -336,15 +434,6 @@ export default function Dashboard() {
     }
   };
 
-  const chartData = checkIns.map((checkIn) => ({
-    date: new Date(checkIn.created_at!).toLocaleDateString("en-US", {
-      weekday: "short",
-    }),
-    mood: checkIn.mood,
-    stress: checkIn.stress_level,
-    productivity: checkIn.productivity_level,
-  }));
-
   const handleBack = () => {
     setName("");
     setCheckIns([]);
@@ -352,6 +441,15 @@ export default function Dashboard() {
     setError(null);
     setIsFetched(false);
   };
+
+  const chartData = checkIns.map((checkIn) => ({
+    date: new Date(checkIn.created_at!).toLocaleDateString("en-US", {
+      weekday: "short",
+    }),
+    mood: getMoodValue(checkIn.mood),
+    stress: checkIn.stress_level,
+    productivity: checkIn.productivity_level,
+  }));
 
   return (
     <div className="min-h-screen bg-background flex">

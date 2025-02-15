@@ -95,6 +95,11 @@ export default function Home() {
       console.error("Error submitting check-in:", error)
     } finally {
       setIsSubmitting(false)
+      setName("");
+      setMood(null);
+      setStress([5]);
+      setProductivity([5]);
+      setNotes("");
     }
   }
 
